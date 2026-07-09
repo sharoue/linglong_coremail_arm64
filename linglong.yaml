@@ -1,0 +1,130 @@
+version: "1"
+
+package:
+  id: cn.coremail.cmclient
+  name: cn.coremail.cmclient
+  version: 4.2.2.1563
+  kind: app
+  description: |
+    Coremail client
+
+command:
+  - /opt/apps/cn.coremail.cmclient/files/bin/cmclient
+
+base: org.deepin.base/25.2.2
+
+build: |
+  set -e
+  DEB_FILE=$(find /project/linglong/sources -maxdepth 1 -name "*.deb" | head -1)
+  if [ -z "$DEB_FILE" ] || [ ! -f "$DEB_FILE" ]; then
+      echo "Error: Cannot find downloaded deb package"
+      exit 1
+  fi
+  echo "Found deb package: $DEB_FILE"
+  rm -rf /tmp/coremail-extract
+  dpkg-deb -x "$DEB_FILE" /tmp/coremail-extract
+
+  mkdir -p ${PREFIX}/files
+  mkdir -p ${PREFIX}/bin
+  mkdir -p ${PREFIX}/share/applications
+  mkdir -p ${PREFIX}/share/icons/hicolor/scalable/apps
+
+  cp -a /tmp/coremail-extract/opt/apps/cmclient/files/. ${PREFIX}/files/
+  chmod +x ${PREFIX}/files/cmclient ${PREFIX}/files/CMCefApp 2>/dev/null || true
+
+  cp /tmp/coremail-extract/opt/apps/cmclient/entries/icons/cmclient.svg \
+     ${PREFIX}/share/icons/hicolor/scalable/apps/
+
+  cat > ${PREFIX}/share/applications/cn.coremail.cmclient.desktop << 'DESKTOP'
+  [Desktop Entry]
+  Name=Coremail
+  Name[zh_CN]=Coremail客户端
+  Comment=Coremail Email Client
+  Comment[zh_CN]=Coremail邮件客户端
+  Exec=cmclient %U
+  Icon=cmclient
+  Type=Application
+  Categories=Network;Email;
+  Terminal=false
+  StartupNotify=true
+  DESKTOP
+
+  cat > ${PREFIX}/bin/cmclient << 'LAUNCHER'
+  #!/bin/sh
+  set -e
+
+  if [ "$1" = "--kill" ]; then
+      if [ -n "$(ps -A | grep -w cmclient)" ]; then
+          killall -10 cmclient && sleep 5 || true
+          if [ -n "$(ps -A | grep -w cmclient)" ]; then
+              killall -3 cmclient && sleep 5 || true
+              if [ -n "$(ps -A | grep -w cmclient)" ]; then
+                  killall -9 cmclient || true
+                  if [ -n "$(ps -A | grep -w CMCefApp)" ]; then
+                      killall -9 CMCefApp || true
+                  fi
+              fi
+          elif [ -n "$(ps -A | grep -w CMCefApp)" ]; then
+              killall -9 CMCefApp || true
+          fi
+      elif [ -n "$(ps -A | grep -w CMCefApp)" ]; then
+          killall -9 CMCefApp || true
+      fi
+  else
+      SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+      if [ "$(basename "$SCRIPT_DIR")" = "bin" ]; then
+          APP_DIR="$(dirname "$SCRIPT_DIR")"
+      else
+          APP_DIR="$SCRIPT_DIR"
+      fi
+      
+      # 防御性路径查找：优先 files/cmclient，其次 files/files/cmclient
+      CMCLIENT_BIN="${APP_DIR}/cmclient"
+      if [ ! -f "$CMCLIENT_BIN" ]; then
+          CMCLIENT_BIN="${APP_DIR}/files/cmclient"
+      fi
+      if [ ! -f "$CMCLIENT_BIN" ]; then
+          echo "Error: cannot find cmclient binary" >&2
+          echo "Searched: ${APP_DIR}/cmclient, ${APP_DIR}/files/cmclient" >&2
+          ls -la "${APP_DIR}/" >&2 || true
+          exit 1
+      fi
+      
+      DISTRO=$(grep '^ID=' /etc/os-release | sed 's/ID=//' | tr -d '"')
+      if [ "$DISTRO" = "ubuntu" ]; then
+          export WEBKIT_DISABLE_COMPOSITING_MODE=1
+      fi
+      export LD_LIBRARY_PATH="${APP_DIR}:${LD_LIBRARY_PATH}"
+      "$CMCLIENT_BIN" "$@"
+  fi
+  LAUNCHER
+
+  chmod +x ${PREFIX}/bin/cmclient
+
+  # 使用 TRIPLET 自动适配 x86_64 / aarch64
+  if [ -f /usr/lib/${TRIPLET}/libgcc_s.so.1 ]; then
+      cp /usr/lib/${TRIPLET}/libgcc_s.so.1 ${PREFIX}/files/libgcc_s.so.1
+  elif [ -f /lib/${TRIPLET}/libgcc_s.so.1 ]; then
+      cp /lib/${TRIPLET}/libgcc_s.so.1 ${PREFIX}/files/libgcc_s.so.1
+  else
+      echo "Warning: libgcc_s.so.1 not found for ${TRIPLET}"
+  fi
+
+  rm -rf /tmp/coremail-extract
+
+buildext:
+  apt:
+    depends:
+      - libdbus-1-3
+      - libgcc-s1
+      - libgdk-pixbuf2.0-0
+      - libjavascriptcoregtk-4.0-18
+      - libsoup2.4-1
+      - libwebkit2gtk-4.0-37
+
+
+sources:
+  - kind: file
+    url: https://lunkr.coremail.cn/dl?p=mail&arch_type=arm64.uos.deb&customer_type=standard
+    digest: 5dc97047da34d5e4c14622ad61079513640949a57698af6833700cee0b88a342
+    name: coremail.deb
